@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "export",
-  basePath: "/pdf-suite", // <-- ADD THIS LINE (use your exact repo name)
+  basePath: "/PDF-Editor",  // <--- Change this line!
   experimental: {
     lockDistDir: false,
   },
