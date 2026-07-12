@@ -124,23 +124,27 @@ export default function WatermarkPage() {
   }, [canvasElement]);
 
   // Drag handlers
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
+  const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     setIsDragging(true);
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     dragStartRef.current = {
-      mouseX: e.clientX,
-      mouseY: e.clientY,
+      mouseX: clientX,
+      mouseY: clientY,
       startX: posPercent.x,
       startY: posPercent.y,
     };
   }, [posPercent]);
 
-  const handleDragMove = useCallback((e: React.MouseEvent) => {
+  const handleDragMove = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     if (!isDragging || !canvasElement) return;
 
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     const rect = canvasElement.getBoundingClientRect();
-    const deltaX = (e.clientX - dragStartRef.current.mouseX) / rect.width;
-    const deltaY = (e.clientY - dragStartRef.current.mouseY) / rect.height;
+    const deltaX = (clientX - dragStartRef.current.mouseX) / rect.width;
+    const deltaY = (clientY - dragStartRef.current.mouseY) / rect.height;
 
     const newX = Math.max(0, Math.min(1, dragStartRef.current.startX + deltaX));
     const newY = Math.max(0, Math.min(1, dragStartRef.current.startY + deltaY));
@@ -350,15 +354,18 @@ export default function WatermarkPage() {
                 {/* PDF Canvas + Draggable Watermark Overlay */}
                 <div
                   ref={containerRef}
-                  className="flex-1 flex items-center justify-center bg-black/5 dark:bg-white/5 rounded-xl border border-border p-4 relative overflow-hidden select-none"
+                  className="flex-1 flex items-center justify-center bg-black/5 dark:bg-white/5 rounded-xl border border-border p-4 relative overflow-hidden select-none touch-none"
                   onMouseMove={handleDragMove}
                   onMouseUp={handleDragEnd}
                   onMouseLeave={handleDragEnd}
+                  onTouchMove={handleDragMove}
+                  onTouchEnd={handleDragEnd}
                 >
                   {/* Actual PDF Canvas */}
                   <canvas
                     ref={setCanvasElement}
                     className="bg-white shadow-xl max-w-full h-auto"
+                    style={{ maxHeight: '70vh' }}
                   />
 
                   {/* Draggable watermark overlay positioned relative to the canvas */}
@@ -381,6 +388,7 @@ export default function WatermarkPage() {
                           className={`absolute font-bold select-none text-center leading-none whitespace-nowrap pointer-events-auto ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
                           style={getOverlayStyle()}
                           onMouseDown={handleDragStart}
+                          onTouchStart={handleDragStart}
                         >
                           <div className={`px-2 py-1 rounded border-2 border-dashed ${isDragging ? 'border-primary bg-primary/10' : 'border-primary/40 hover:border-primary hover:bg-primary/5'} transition-colors`}>
                             {text || " "}

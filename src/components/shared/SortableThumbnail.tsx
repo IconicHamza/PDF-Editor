@@ -1,16 +1,16 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { PageThumbnail } from "@/components/shared/PageThumbnail";
-import { RotateCw, Trash2, GripHorizontal } from "lucide-react";
-import { motion } from "framer-motion";
+import { getPageThumbnailDataUrl } from "@/lib/pdf-renderer";
+import { RotateCw, Trash2, GripHorizontal, Loader2 } from "lucide-react";
 
 interface SortableThumbnailProps {
-  id: string; // The original page index + something unique like `page-${index}`
+  id: string;
   file: File;
-  originalPageNumber: number; // The 1-based index to render from the original PDF
-  displayNumber: number; // Current visual order
+  originalPageNumber: number;
+  displayNumber: number;
   rotation: number;
   onRotate: (id: string) => void;
   onRemove: (id: string) => void;
@@ -28,6 +28,25 @@ export function SortableThumbnail({
     isDragging,
   } = useSortable({ id });
 
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    (async () => {
+      try {
+        const dataUrl = await getPageThumbnailDataUrl(file, originalPageNumber, 0.4);
+        if (active) setThumbnailUrl(dataUrl);
+      } catch (err) {
+        console.error("Failed to render organize thumbnail", err);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [file, originalPageNumber]);
+
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -41,16 +60,26 @@ export function SortableThumbnail({
       className={`relative group ${isDragging ? "opacity-50 scale-105" : ""}`}
     >
       <div 
-        className="w-full relative transition-transform duration-300 transform-gpu"
+        className="w-full relative transition-transform duration-300 transform-gpu rounded-xl overflow-hidden glass min-h-[120px] flex items-center justify-center"
         style={{ transform: `rotate(${rotation}deg)` }}
       >
-        {/* We use PageThumbnail to render it, disable its interactions though by overriding styles/clicks basically via pointer-events later or just leaving it read-only */}
         <div className={isDragging ? "ring-2 ring-primary bg-primary/10 rounded-xl" : ""}>
-          <PageThumbnail 
-            file={file} 
-            pageNumber={originalPageNumber} 
-            scale={0.5} 
-          />
+          {loading ? (
+            <div className="flex items-center justify-center p-8">
+              <Loader2 className="animate-spin text-primary/50" />
+            </div>
+          ) : thumbnailUrl ? (
+            <img 
+              src={thumbnailUrl} 
+              alt={`Page ${displayNumber}`}
+              className="w-full h-auto bg-white drop-shadow-md"
+              draggable={false}
+            />
+          ) : (
+            <div className="flex items-center justify-center p-8 text-secondary text-xs">
+              Page {displayNumber}
+            </div>
+          )}
         </div>
       </div>
 

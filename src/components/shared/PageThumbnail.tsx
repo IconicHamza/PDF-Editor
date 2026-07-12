@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { loadPDF, renderPageToCanvas } from "@/lib/pdf-renderer";
-import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { getPageThumbnailDataUrl } from "@/lib/pdf-renderer";
+import { Loader2, AlertTriangle } from "lucide-react";
 import { motion } from "framer-motion";
 
 interface PageThumbnailProps {
@@ -20,21 +20,25 @@ export function PageThumbnail({
   onSelect,
   scale = 0.5 
 }: PageThumbnailProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setError(false);
+    setThumbnailUrl(null);
+
     (async () => {
       try {
-        setLoading(true);
-        const doc = await loadPDF(file);
-        if (active && canvasRef.current) {
-          await renderPageToCanvas(doc, pageNumber, canvasRef.current, scale);
+        const dataUrl = await getPageThumbnailDataUrl(file, pageNumber, scale);
+        if (active) {
+          setThumbnailUrl(dataUrl);
         }
-        await doc.destroy();
       } catch (err) {
-        console.error("Failed to render thumbnail", err);
+        console.error("Failed to render thumbnail for page", pageNumber, err);
+        if (active) setError(true);
       } finally {
         if (active) setLoading(false);
       }
@@ -49,14 +53,27 @@ export function PageThumbnail({
       onClick={onSelect}
       className={`
         relative cursor-pointer rounded-xl overflow-hidden glass transition-all
-        flex flex-col items-center justify-center min-h-[150px]
+        flex flex-col items-center justify-center min-h-[120px]
         ${isSelected ? "ring-2 ring-primary bg-primary/10" : "hover:ring-1 hover:ring-primary/50"}
       `}
     >
       {loading ? (
-        <Loader2 className="animate-spin text-primary/50 mb-2" />
+        <div className="flex flex-col items-center justify-center p-6">
+          <Loader2 className="animate-spin text-primary/50 mb-2" />
+          <span className="text-xs text-secondary">Loading...</span>
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center p-4 text-amber-500">
+          <AlertTriangle size={24} className="mb-1" />
+          <span className="text-xs">Preview unavailable</span>
+        </div>
       ) : (
-        <canvas ref={canvasRef} className="max-w-full h-auto drop-shadow-md bg-white" />
+        <img 
+          src={thumbnailUrl!} 
+          alt={`Page ${pageNumber}`}
+          className="w-full h-auto drop-shadow-md bg-white"
+          draggable={false}
+        />
       )}
       
       <div className={`

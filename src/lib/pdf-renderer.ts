@@ -6,7 +6,9 @@ let pdfjsLib: any = null;
 async function getPdfjs() {
   if (!pdfjsLib) {
     pdfjsLib = await import("pdfjs-dist");
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "/PDF-Editor/pdf.worker.min.mjs";
+    // Dynamically determine the basePath for both local dev and GitHub Pages
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `${basePath}/pdf.worker.min.mjs`;
   }
   return pdfjsLib;
 }
@@ -47,25 +49,26 @@ export async function renderPageToCanvas(
 ): Promise<void> {
   const page = await pdfDoc.getPage(pageNumber);
   
-  // To ensure the PDF renders crystal-clear on High-DPI/Retina screens, we multiply the scale.
-  // We use devicePixelRatio, defaulting to 2 for crisp textures.
-  const pixelRatio = typeof window !== 'undefined' ? (window.devicePixelRatio || 2) : 2;
+  // For thumbnails (small scales), use a lower pixel ratio to save memory on mobile
+  const pixelRatio = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 2, 2) : 2;
   const renderScale = baseScale * pixelRatio;
   
-  // We get two viewports: one for visual layout, one for high-res drawing
   const logicalViewport = page.getViewport({ scale: baseScale });
   const renderViewport = page.getViewport({ scale: renderScale });
   
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Could not get canvas context");
   
-  // Set the actual physical pixels of the canvas array (High Resolution)
-  canvas.height = renderViewport.height;
+  // Set the actual physical pixels of the canvas
   canvas.width = renderViewport.width;
+  canvas.height = renderViewport.height;
   
-  // Force the CSS layout parser to constrain the canvas to the logical 1x scale!
+  // Use CSS to constrain to logical size - use max-width so it's responsive
   canvas.style.width = `${Math.floor(logicalViewport.width)}px`;
   canvas.style.height = `${Math.floor(logicalViewport.height)}px`;
+  canvas.style.maxWidth = "100%";
+  canvas.style.height = "auto";
+  canvas.style.aspectRatio = `${logicalViewport.width} / ${logicalViewport.height}`;
   
   const renderContext = {
     canvasContext: context,
@@ -90,10 +93,20 @@ export async function getPageThumbnailDataUrl(
 ): Promise<string> {
   const pdfDoc = await loadPDF(file);
   const canvas = document.createElement("canvas");
-  await renderPageToCanvas(pdfDoc, pageNumber, canvas, scale);
+  
+  // For offscreen canvases, render at a fixed scale without CSS tricks
+  const page = await pdfDoc.getPage(pageNumber);
+  const viewport = page.getViewport({ scale });
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not get canvas context");
+  
+  const renderTask = page.render({ canvasContext: ctx, viewport });
+  await renderTask.promise;
   
   const dataUrl = canvas.toDataURL("image/png");
-  // Clean up
   await pdfDoc.destroy();
   return dataUrl;
 }

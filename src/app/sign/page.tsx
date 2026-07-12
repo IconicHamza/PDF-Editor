@@ -185,24 +185,28 @@ export default function SignPDFPage() {
   const [isDraggingNode, setIsDraggingNode] = useState(false);
   const dragStartRef = useRef({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
   
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
+  const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     setIsDraggingNode(true);
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     dragStartRef.current = {
-      mouseX: e.clientX,
-      mouseY: e.clientY,
+      mouseX: clientX,
+      mouseY: clientY,
       startX: posPercent.x,
       startY: posPercent.y,
     };
   }, [posPercent]);
 
-  const handleDrag = useCallback((e: React.MouseEvent) => {
+  const handleDrag = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     if (!isDraggingNode || !canvasElement) return;
     
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     const rect = canvasElement.getBoundingClientRect();
     
-    const deltaX = (e.clientX - dragStartRef.current.mouseX) / rect.width;
-    const deltaY = (e.clientY - dragStartRef.current.mouseY) / rect.height;
+    const deltaX = (clientX - dragStartRef.current.mouseX) / rect.width;
+    const deltaY = (clientY - dragStartRef.current.mouseY) / rect.height;
     
     const newX = Math.max(0, Math.min(1, dragStartRef.current.startX + deltaX));
     const newY = Math.max(0, Math.min(1, dragStartRef.current.startY + deltaY));
@@ -357,12 +361,14 @@ export default function SignPDFPage() {
 
               {/* Viewport */}
               <div 
-                className="relative bg-black/5 dark:bg-white/5 border border-border rounded-lg overflow-hidden flex items-center justify-center min-h-[500px]"
+                className="relative bg-black/5 dark:bg-white/5 border border-border rounded-lg overflow-hidden flex items-center justify-center min-h-[300px] md:min-h-[500px] touch-none"
                 onMouseMove={handleDrag}
                 onMouseUp={handleDragEnd}
                 onMouseLeave={handleDragEnd}
+                onTouchMove={handleDrag}
+                onTouchEnd={handleDragEnd}
               >
-                <canvas ref={setCanvasElement} className="bg-white shadow-xl max-w-full h-auto" />
+                <canvas ref={setCanvasElement} className="bg-white shadow-xl max-w-full h-auto" style={{ maxHeight: '70vh' }} />
                 
                 {/* Signature draggable overlay */}
                 {canvasDisplaySize.width > 0 && signatureData && (
@@ -380,6 +386,7 @@ export default function SignPDFPage() {
                       className={`absolute border-2 ${isDraggingNode ? 'border-primary border-solid' : 'border-primary border-dashed'} bg-primary/10 cursor-move flex items-center justify-center overflow-hidden select-none pointer-events-auto`}
                       style={getOverlayStyle()}
                       onMouseDown={handleDragStart}
+                      onTouchStart={handleDragStart}
                     >
                       <img src={signatureData} alt="" className="w-full h-full object-contain pointer-events-none" />
                     </div>

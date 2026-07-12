@@ -312,9 +312,9 @@ export async function signPDF(
   const page = pages[pageIndex];
   
   // Fetch binary data directly to prevent 'atob' blocking
-  const res = await fetch(signatureDataUrl);
-  const arrayBuffer = await res.arrayBuffer();
-  const bytes = new Uint8Array(arrayBuffer);
+  const sigRes = await fetch(signatureDataUrl);
+  const sigBuffer = await sigRes.arrayBuffer();
+  const bytes = new Uint8Array(sigBuffer);
   
   // Try embedding as PNG first, fall back to converting to JPEG
   let embeddedImage;
