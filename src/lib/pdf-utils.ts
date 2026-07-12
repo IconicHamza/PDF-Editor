@@ -18,6 +18,8 @@ export async function mergePDFs(files: File[], onProgress?: (p: number) => void)
     copiedPages.forEach((page) => mergedPdf.addPage(page));
     
     if (onProgress) onProgress(((i + 1) / total) * 100);
+    // Yield to the event loop
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   
   if (mergedPdf.getPageCount() === 0) throw new Error("The selected PDFs did not contain any pages.");
@@ -99,20 +101,13 @@ async function normalizeImageForPdf(file: File): Promise<{ bytes: Uint8Array; ty
   }
 
   const dataUrl = await convertDataUrlToJpeg(await fileToDataURL(file));
-  return { bytes: dataUrlToBytes(dataUrl), type: "jpg" };
+  return { bytes: await dataUrlToBytesAsync(dataUrl), type: "jpg" };
 }
 
-function dataUrlToBytes(dataUrl: string): Uint8Array {
-  const base64Data = dataUrl.split(",")[1];
-  if (!base64Data) throw new Error("Invalid image data URL");
-
-  const binaryStr = atob(base64Data);
-  const bytes = new Uint8Array(binaryStr.length);
-  for (let i = 0; i < binaryStr.length; i += 1) {
-    bytes[i] = binaryStr.charCodeAt(i);
-  }
-
-  return bytes;
+async function dataUrlToBytesAsync(dataUrl: string): Promise<Uint8Array> {
+  const res = await fetch(dataUrl);
+  const arrayBuffer = await res.arrayBuffer();
+  return new Uint8Array(arrayBuffer);
 }
 
 /**
@@ -171,13 +166,10 @@ export async function compressPDFExtreme(
     const jpegQuality = 0.6 + (quality * 0.4);
     const dataUrl = canvas.toDataURL("image/jpeg", jpegQuality);
     
-    // Convert to bytes
-    const base64Data = dataUrl.split(",")[1];
-    const binaryStr = atob(base64Data);
-    const bytes = new Uint8Array(binaryStr.length);
-    for (let j = 0; j < binaryStr.length; j++) {
-      bytes[j] = binaryStr.charCodeAt(j);
-    }
+    // Convert to bytes async without freezing the browser
+    const res = await fetch(dataUrl);
+    const arrayBuffer = await res.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
     
     // Embed and draw on new PDF
     const image = await newPdf.embedJpg(bytes);
@@ -193,6 +185,9 @@ export async function compressPDFExtreme(
     if (onProgress) {
       onProgress((i / totalPages) * 100);
     }
+    
+    // Yield to the event loop so the browser can paint the progress bar updates!
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
   
   return await newPdf.save({ useObjectStreams: true });
@@ -316,15 +311,10 @@ export async function signPDF(
   
   const page = pages[pageIndex];
   
-  // Extract raw bytes from data URL for more reliable embedding
-  const base64Data = signatureDataUrl.split(',')[1];
-  if (!base64Data) throw new Error("Invalid signature data URL");
-  
-  const binaryStr = atob(base64Data);
-  const bytes = new Uint8Array(binaryStr.length);
-  for (let i = 0; i < binaryStr.length; i++) {
-    bytes[i] = binaryStr.charCodeAt(i);
-  }
+  // Fetch binary data directly to prevent 'atob' blocking
+  const res = await fetch(signatureDataUrl);
+  const arrayBuffer = await res.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
   
   // Try embedding as PNG first, fall back to converting to JPEG
   let embeddedImage;
@@ -342,13 +332,8 @@ export async function signPDF(
     console.warn("PNG embedding failed, converting to JPEG fallback:", pngError);
     try {
       const jpegDataUrl = await convertDataUrlToJpeg(signatureDataUrl);
-      const jpegBase64 = jpegDataUrl.split(',')[1];
-      if (!jpegBase64) throw new Error("JPEG conversion failed");
-      const jpegBinaryStr = atob(jpegBase64);
-      const jpegBytes = new Uint8Array(jpegBinaryStr.length);
-      for (let i = 0; i < jpegBinaryStr.length; i++) {
-        jpegBytes[i] = jpegBinaryStr.charCodeAt(i);
-      }
+      const jpegRes = await fetch(jpegDataUrl);
+      const jpegBytes = new Uint8Array(await jpegRes.arrayBuffer());
       embeddedImage = await pdfDoc.embedJpg(jpegBytes);
     } catch (jpegError) {
       console.error("Both PNG and JPEG embedding failed:", jpegError);
