@@ -42,6 +42,10 @@ if (-not (Test-Path .git)) {
 Write-Host "Deploying updates to GitHub..." -ForegroundColor Cyan
 git add .
 git commit -m "Automated update from AI"
+
+# Ensure we are using the 'main' branch, as some older Git versions default to 'master'
+git branch -M main
+
 git push -u origin main
 
 if ($LASTEXITCODE -eq 0) {
