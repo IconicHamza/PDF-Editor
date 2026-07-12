@@ -103,7 +103,7 @@ export async function getPageThumbnailDataUrl(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not get canvas context");
   
-  const renderTask = page.render({ canvasContext: ctx, viewport });
+  const renderTask = page.render({ canvasContext: ctx, viewport, canvas });
   await renderTask.promise;
   
   const dataUrl = canvas.toDataURL("image/png");
