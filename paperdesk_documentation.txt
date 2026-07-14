@@ -1,0 +1,71 @@
+PAPERDESK PDF EDITOR - PROJECT DOCUMENTATION & OVERVIEW
+
+PaperDesk is a premium, professional, local-first web application designed for processing, editing, and optimizing PDF files directly inside the browser.
+
+========================================================================
+1. CORE ARCHITECTURE PRINCIPLE: LOCAL-FIRST SECURITY
+========================================================================
+Unlike traditional PDF web applications that upload your documents to a remote server, PaperDesk performs all processing on the client-side (using the browser's own CPU/GPU memory):
+* Zero Server Uploads: Private and confidential data never leaves your computer.
+* High Performance: No network latency for uploading/downloading heavy documents.
+* Offline Ready: Once loaded, the application can run without an internet connection.
+
+========================================================================
+2. FEATURE BREAKDOWN & CAPABILITIES
+========================================================================
+
+* ORGANIZE PAGES
+  - Reorder pages visually by dragging and dropping them.
+  - Rotate pages in 90-degree increments.
+  - Delete individual pages from the document.
+  - Previews are cached as image data URLs to prevent them from turning blank during dragging.
+
+* EXTREME COMPRESSION
+  - Lossless (0%): Rebuilds the PDF structure (garbage collection) to drop unused objects, keeping vectors and text perfectly crisp and selectable.
+  - Extreme (10% - 100%): Rasterizes PDF pages into optimized JPEGs at customizable quality/DPI levels.
+  - Smart Fallback: Automatically falls back to the original or basic lossless file if rasterization increases the size.
+
+* E-SIGNATURE (SIGN PDF)
+  - Interactive signature drawing pad with customizable pen.
+  - Drag-and-drop signature placer overlay with resolution-independent coordinates.
+  - Touchscreen controls optimized for mobile/tablet screens (prevents scrolling conflict).
+
+* SPLIT PDF (PAGE EXTRACTOR)
+  - Select pages to extract visually by clicking page thumbnails.
+  - Support for typing ranges (e.g., "1-4, 7, 9-12").
+
+* MERGE PDF
+  - Combine multiple PDF files into one ordered document.
+  - Rearrange files before merging using drag-and-drop list controls.
+
+* WATERMARK
+  - Stamp custom text marks across every page.
+  - Custom opacity, font size, rotation, and colors (Red, Blue, Black, Gray).
+  - Drag and drop watermark text onto the preview canvas to position it.
+
+* IMAGES TO PDF
+  - Convert JPG, PNG, and WebP images into a single A4 PDF.
+  - Auto-scales and centers images inside standard margins.
+
+* SANITIZE / SECURE
+  - Wipes private, hidden metadata (Author, Subject, Software, Modification Date) from the PDF before sharing.
+
+========================================================================
+3. TECH STACK & INFRASTRUCTURE
+========================================================================
+* Core Framework: Next.js (statically exported to HTML/JS).
+* CSS: Tailwind CSS (for fully responsive grid layouts).
+* PDF Parsing/Rendering: pdfjs-dist (customized with async background workers).
+* PDF Assembly/Modification: pdf-lib (client-side binary manipulation).
+* Drag-and-Drop: @dnd-kit/sortable.
+
+========================================================================
+4. HOW TO DEPLOY IN THE FUTURE
+========================================================================
+We have automated the deployment pipeline using GitHub Actions. To push future updates live:
+1. Open your terminal.
+2. Run this command:
+   powershell -ExecutionPolicy Bypass -File "C:\Users\htari\.gemini\antigravity\scratch\pdf-suite\deploy.ps1"
+
+This automatically compiles the static Next.js assets, disables Jekyll (so GitHub Pages doesn't block _next assets), and updates the online version of the app at:
+https://iconichamza.github.io/PDF-Editor/

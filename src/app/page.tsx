@@ -13,6 +13,7 @@ import {
   Clock3,
   Files,
   LockKeyhole,
+  Type,
 } from "lucide-react";
 
 const tools = [
@@ -63,6 +64,12 @@ const tools = [
     description: "Apply branded or confidential text marks across every page.",
     href: "/watermark",
     icon: Droplet,
+  },
+  {
+    title: "Edit Text",
+    description: "Click any text in the document and edit it directly inline.",
+    href: "/edit",
+    icon: Type,
   },
 ];
 

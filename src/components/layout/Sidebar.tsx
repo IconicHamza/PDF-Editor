@@ -12,6 +12,7 @@ import {
   Settings2,
   Droplet,
   LayoutDashboard,
+  Type,
 } from "lucide-react";
 
 const navItems = [
@@ -24,6 +25,7 @@ const navItems = [
   { name: "Security", href: "/security", icon: ShieldCheck },
   { name: "Organize", href: "/organize", icon: Settings2 },
   { name: "Watermark", href: "/watermark", icon: Droplet },
+  { name: "Edit Text", href: "/edit", icon: Type },
 ];
 
 export function Sidebar() {

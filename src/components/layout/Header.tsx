@@ -15,6 +15,7 @@ const titles: Record<string, string> = {
   "/security": "Security",
   "/organize": "Organize Pages",
   "/watermark": "Watermark",
+  "/edit": "Edit PDF Text",
 };
 
 export function Header() {
