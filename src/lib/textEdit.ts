@@ -12,21 +12,34 @@ export interface TextItemData {
 export interface TextEditData {
   originalItem: TextItemData;
   newText: string;
-  color: [number, number, number]; // RGB 0-1
-  bgColor: [number, number, number]; // RGB 0-1
+  color: [number, number, number]; // RGB 0-1, sampled glyph color
+  bgColor: [number, number, number]; // RGB 0-1, sampled background color
 }
 
 /**
- * Maps pdfjs font family and name to standard PDF-lib fonts
+ * Maps pdfjs font family and name to standard PDF-lib StandardFonts enum values.
  */
 export function getStandardFontName(fontFamily: string, fontName: string): StandardFonts {
   const family = (fontFamily || "").toLowerCase();
   const name = (fontName || "").toLowerCase();
-  
+
   const isBold = family.includes("bold") || name.includes("bold");
-  const isItalic = family.includes("italic") || family.includes("oblique") || name.includes("italic") || name.includes("oblique");
-  const isSerif = family.includes("times") || family.includes("serif") || name.includes("times") || name.includes("serif");
-  const isMono = family.includes("courier") || family.includes("monospace") || family.includes("mono") || name.includes("courier") || name.includes("mono");
+  const isItalic =
+    family.includes("italic") ||
+    family.includes("oblique") ||
+    name.includes("italic") ||
+    name.includes("oblique");
+  const isSerif =
+    family.includes("times") ||
+    family.includes("serif") ||
+    name.includes("times") ||
+    name.includes("serif");
+  const isMono =
+    family.includes("courier") ||
+    family.includes("monospace") ||
+    family.includes("mono") ||
+    name.includes("courier") ||
+    name.includes("mono");
 
   if (isMono) {
     if (isBold && isItalic) return StandardFonts.CourierBoldOblique;
@@ -34,15 +47,14 @@ export function getStandardFontName(fontFamily: string, fontName: string): Stand
     if (isItalic) return StandardFonts.CourierOblique;
     return StandardFonts.Courier;
   }
-  
+
   if (isSerif) {
     if (isBold && isItalic) return StandardFonts.TimesRomanBoldItalic;
     if (isBold) return StandardFonts.TimesRomanBold;
     if (isItalic) return StandardFonts.TimesRomanItalic;
     return StandardFonts.TimesRoman;
   }
-  
-  // Default to Helvetica/Arial (sans-serif)
+
   if (isBold && isItalic) return StandardFonts.HelveticaBoldOblique;
   if (isBold) return StandardFonts.HelveticaBold;
   if (isItalic) return StandardFonts.HelveticaOblique;
@@ -50,7 +62,13 @@ export function getStandardFontName(fontFamily: string, fontName: string): Stand
 }
 
 /**
- * Samples text and background color from a rendered canvas at the given PDF bounding box coordinates
+ * Samples background color and glyph color from a rendered canvas at the given
+ * PDF bounding box. The canvas must have been rendered with renderPageToCanvas
+ * so that its physical pixel dimensions correspond to a scaled version of the
+ * PDF coordinate space.
+ *
+ * pdfWidth / pdfHeight = unscaled PDF page size in points.
+ * canvas.width / canvas.height = actual pixel count (includes devicePixelRatio scaling).
  */
 export function sampleColorsFromCanvas(
   canvas: HTMLCanvasElement,
@@ -59,105 +77,198 @@ export function sampleColorsFromCanvas(
   box: { x: number; y: number; width: number; height: number }
 ): { color: [number, number, number]; bgColor: [number, number, number] } {
   const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    return { color: [0, 0, 0], bgColor: [1, 1, 1] }; // Default black text, white bg
-  }
+  if (!ctx) return { color: [0, 0, 0], bgColor: [1, 1, 1] };
 
+  // canvas.width/height are in physical pixels (includes DPR scaling).
   const scaleX = canvas.width / pdfWidth;
   const scaleY = canvas.height / pdfHeight;
 
-  // Convert PDF coordinates to Canvas pixels
-  // Note: PDF y starts at bottom-left, Canvas y starts at top-left
+  // PDF coords: origin bottom-left. Canvas: origin top-left.
   const cx = Math.floor(box.x * scaleX);
   const cy = Math.floor((pdfHeight - box.y - box.height) * scaleY);
-  const cw = Math.max(1, Math.floor(box.width * scaleX));
-  const ch = Math.max(1, Math.floor(box.height * scaleY));
+  const cw = Math.max(2, Math.floor(box.width * scaleX));
+  const ch = Math.max(2, Math.floor(box.height * scaleY));
 
   try {
-    const imgData = ctx.getImageData(
-      Math.max(0, Math.min(cx, canvas.width - 1)),
-      Math.max(0, Math.min(cy, canvas.height - 1)),
-      Math.min(cw, canvas.width - cx),
-      Math.min(ch, canvas.height - cy)
-    );
+    const safeX = Math.max(0, Math.min(cx, canvas.width - 1));
+    const safeY = Math.max(0, Math.min(cy, canvas.height - 1));
+    const safeW = Math.min(cw, canvas.width - safeX);
+    const safeH = Math.min(ch, canvas.height - safeY);
+    if (safeW <= 0 || safeH <= 0) return { color: [0, 0, 0], bgColor: [1, 1, 1] };
 
+    const imgData = ctx.getImageData(safeX, safeY, safeW, safeH);
     const data = imgData.data;
-    const len = data.length;
+    const w = imgData.width;
+    const h = imgData.height;
 
-    // Sample background: average of corner and edge middle pixels
-    let bgR = 0, bgG = 0, bgB = 0;
-    let bgSamples = 0;
-
-    const corners = [
+    // --- Background: sample corners + edge midpoints (pixels outside glyph bodies) ---
+    const edgeSamples: Array<{ x: number; y: number }> = [
       { x: 0, y: 0 },
-      { x: cw - 1, y: 0 },
-      { x: 0, y: ch - 1 },
-      { x: cw - 1, y: ch - 1 },
-      { x: Math.floor(cw / 2), y: 0 },
-      { x: Math.floor(cw / 2), y: ch - 1 },
+      { x: w - 1, y: 0 },
+      { x: 0, y: h - 1 },
+      { x: w - 1, y: h - 1 },
+      { x: Math.floor(w / 2), y: 0 },
+      { x: Math.floor(w / 2), y: h - 1 },
+      { x: 0, y: Math.floor(h / 2) },
+      { x: w - 1, y: Math.floor(h / 2) },
     ];
 
-    corners.forEach(c => {
-      if (c.x >= 0 && c.x < cw && c.y >= 0 && c.y < ch) {
-        const idx = (c.y * cw + c.x) * 4;
-        if (idx >= 0 && idx < len - 3) {
-          bgR += data[idx];
-          bgG += data[idx + 1];
-          bgB += data[idx + 2];
-          bgSamples++;
-        }
+    let bgR = 0, bgG = 0, bgB = 0, bgCount = 0;
+    let bgRsq = 0, bgGsq = 0, bgBsq = 0; // for variance
+
+    edgeSamples.forEach(({ x, y }) => {
+      const i = (y * w + x) * 4;
+      if (i >= 0 && i < data.length - 3) {
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        bgR += r; bgG += g; bgB += b;
+        bgRsq += r * r; bgGsq += g * g; bgBsq += b * b;
+        bgCount++;
       }
     });
 
-    const finalBgColor: [number, number, number] = bgSamples > 0 
-      ? [bgR / bgSamples / 255, bgG / bgSamples / 255, bgB / bgSamples / 255]
-      : [1, 1, 1]; // Default white
+    const finalBgColor: [number, number, number] = bgCount > 0
+      ? [bgR / bgCount / 255, bgG / bgCount / 255, bgB / bgCount / 255]
+      : [1, 1, 1];
 
-    // Sample text color: find pixel with highest distance from background color
+    // Check if background is non-uniform (gradient, image behind text).
+    // Variance > threshold means the region is complex.
+    let isUniform = true;
+    if (bgCount > 1) {
+      const varR = bgRsq / bgCount - (bgR / bgCount) ** 2;
+      const varG = bgGsq / bgCount - (bgG / bgCount) ** 2;
+      const varB = bgBsq / bgCount - (bgB / bgCount) ** 2;
+      if (varR + varG + varB > 600) isUniform = false; // ~25/255 std-dev threshold
+    }
+
+    // If non-uniform background, still use the average — it's the best we can do
+    // without image-patch compositing. Log a warning for debugging.
+    if (!isUniform) {
+      console.debug("[textEdit] Non-uniform background detected; using average color.");
+    }
+
+    // --- Glyph color: pixels that differ significantly from the background ---
+    const bgRn = finalBgColor[0] * 255;
+    const bgGn = finalBgColor[1] * 255;
+    const bgBn = finalBgColor[2] * 255;
+
+    let textR = 0, textG = 0, textB = 0, textCount = 0;
     let maxDist = -1;
-    let bestPixel = { r: 0, g: 0, b: 0 };
-    let textR = 0, textG = 0, textB = 0;
-    let textSamples = 0;
+    let bestR = 0, bestG = 0, bestB = 0;
 
-    for (let i = 0; i < len; i += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-
-      const dist = Math.pow(r - finalBgColor[0] * 255, 2) +
-                   Math.pow(g - finalBgColor[1] * 255, 2) +
-                   Math.pow(b - finalBgColor[2] * 255, 2);
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const dist =
+        (r - bgRn) * (r - bgRn) +
+        (g - bgGn) * (g - bgGn) +
+        (b - bgBn) * (b - bgBn);
 
       if (dist > maxDist) {
         maxDist = dist;
-        bestPixel = { r, g, b };
+        bestR = r; bestG = g; bestB = b;
       }
-
-      // If the pixel is significantly different from the background, accumulate it
+      // Threshold: distance > sqrt(1500) ≈ 38.7 out of 255 per channel
       if (dist > 1500) {
-        textR += r;
-        textG += g;
-        textB += b;
-        textSamples++;
+        textR += r; textG += g; textB += b;
+        textCount++;
       }
     }
 
-    const finalTextColor: [number, number, number] = textSamples > 0
-      ? [textR / textSamples / 255, textG / textSamples / 255, textB / textSamples / 255]
-      : [bestPixel.r / 255, bestPixel.g / 255, bestPixel.b / 255];
+    const finalTextColor: [number, number, number] = textCount > 0
+      ? [textR / textCount / 255, textG / textCount / 255, textB / textCount / 255]
+      : [bestR / 255, bestG / 255, bestB / 255];
 
-    return {
-      color: finalTextColor,
-      bgColor: finalBgColor,
-    };
+    return { color: finalTextColor, bgColor: finalBgColor };
   } catch (e) {
-    console.error("Failed to sample colors from canvas:", e);
+    console.error("[textEdit] sampleColorsFromCanvas failed:", e);
     return { color: [0, 0, 0], bgColor: [1, 1, 1] };
   }
 }
 
 /**
- * Applies the edits dictionary (Detect -> Redact -> Redraw) to a PDF using pdf-lib
+ * Composites all pending edits onto an offscreen canvas (for Preview Mode).
+ * Each edit: (1) erase original text with bg-color rect, (2) draw new text.
+ * Returns a data-URL PNG of the composited result.
+ *
+ * sourceCanvas: the pdfjs-rendered canvas (pixel dimensions match pdfWidth/pdfHeight * scale * DPR).
+ * pdfWidth / pdfHeight: unscaled PDF coordinate space.
+ * edits: map of edits for this page only (keys are `${pageIndex}-${itemIndex}`).
+ * styles: pdfjs text styles map (fontFamily per fontName).
+ * pageIndex: which page (0-based) to filter edits for.
+ */
+export async function compositeEditsToCanvas(
+  sourceCanvas: HTMLCanvasElement,
+  pdfWidth: number,
+  pdfHeight: number,
+  editsForPage: Record<number, TextEditData>,
+  styles: Record<string, any>
+): Promise<void> {
+  const ctx = sourceCanvas.getContext("2d");
+  if (!ctx) return;
+
+  const scaleX = sourceCanvas.width / pdfWidth;
+  const scaleY = sourceCanvas.height / pdfHeight;
+
+  for (const itemIndexStr in editsForPage) {
+    const edit = editsForPage[itemIndexStr];
+    const item = edit.originalItem;
+
+    const pdfX = item.transform[4];
+    const pdfY = item.transform[5];
+    const fontHeightPt = Math.abs(item.transform[3]);
+    const widthPt = item.width;
+    const heightPt = item.height || fontHeightPt;
+
+    // Convert PDF points → canvas pixels (flip Y axis)
+    const canvasX = pdfX * scaleX;
+    // PDF baseline y → canvas top-left y. Add small descent padding (20% of height).
+    const descentPad = heightPt * 0.25 * scaleY;
+    const canvasY = (pdfHeight - pdfY - heightPt) * scaleY - descentPad;
+    const canvasW = widthPt * scaleX;
+    const canvasH = (heightPt + heightPt * 0.25) * scaleY;
+
+    // 1. Redact: fill with sampled background color
+    const [bgR, bgG, bgB] = edit.bgColor;
+    ctx.fillStyle = `rgb(${Math.round(bgR * 255)},${Math.round(bgG * 255)},${Math.round(bgB * 255)})`;
+    ctx.fillRect(canvasX, canvasY, canvasW, canvasH);
+
+    // 2. Redraw: render replacement text
+    const styleObj = styles[item.fontName] || {};
+    const fontFamily = styleObj.fontFamily || "sans-serif";
+    const isBold = fontFamily.toLowerCase().includes("bold") || item.fontName.toLowerCase().includes("bold");
+    const isItalic =
+      fontFamily.toLowerCase().includes("italic") ||
+      fontFamily.toLowerCase().includes("oblique") ||
+      item.fontName.toLowerCase().includes("italic");
+
+    // Font size in canvas pixels (same ratio as PDF points → canvas)
+    const fontSizePx = fontHeightPt * scaleY;
+    const fontStr = `${isItalic ? "italic " : ""}${isBold ? "bold " : ""}${fontSizePx}px ${fontFamily}`;
+
+    ctx.save();
+    ctx.font = fontStr;
+
+    // Horizontal scale: if new text width differs > 15%, compress/stretch to fit
+    const measuredW = ctx.measureText(edit.newText).width;
+    let hScale = 1.0;
+    if (canvasW > 0 && measuredW > 0 && Math.abs(measuredW - canvasW) / canvasW > 0.15) {
+      hScale = canvasW / measuredW;
+    }
+
+    const [tR, tG, tB] = edit.color;
+    ctx.fillStyle = `rgb(${Math.round(tR * 255)},${Math.round(tG * 255)},${Math.round(tB * 255)})`;
+
+    // Baseline position: PDF y → canvas y, align text to baseline
+    const baselineY = (pdfHeight - pdfY) * scaleY;
+
+    ctx.setTransform(hScale, 0, 0, 1, canvasX * (1 - hScale), 0);
+    ctx.fillText(edit.newText, canvasX, baselineY);
+    ctx.restore();
+  }
+}
+
+/**
+ * Applies edits to the actual PDF binary using pdf-lib.
+ * Detect → Redact → Redraw pattern for each edited text run.
  */
 export async function applyTextEditsToPDF(
   file: File,
@@ -166,16 +277,14 @@ export async function applyTextEditsToPDF(
 ): Promise<Uint8Array> {
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-  
+
   // Group edits by pageIndex
   const editsByPage: Record<number, Record<number, TextEditData>> = {};
-  Object.keys(edits).forEach(key => {
+  Object.keys(edits).forEach((key) => {
     const [pageIndexStr, itemIndexStr] = key.split("-");
     const pageIndex = parseInt(pageIndexStr);
     const itemIndex = parseInt(itemIndexStr);
-    if (!editsByPage[pageIndex]) {
-      editsByPage[pageIndex] = {};
-    }
+    if (!editsByPage[pageIndex]) editsByPage[pageIndex] = {};
     editsByPage[pageIndex][itemIndex] = edits[key];
   });
 
@@ -188,70 +297,72 @@ export async function applyTextEditsToPDF(
     const page = pages[pageIndex];
     const { width: pdfWidth, height: pdfHeight } = page.getSize();
 
-    // Group items by font to embed standard fonts only once per page
+    // Embed fonts once per page (cache by StandardFonts name)
     const fontCache: Record<string, any> = {};
 
-    for (const itemIndex in pageEdits) {
-      const edit = pageEdits[itemIndex];
+    for (const itemIndexStr in pageEdits) {
+      const edit = pageEdits[itemIndexStr];
       const item = edit.originalItem;
-      
+
       const x = item.transform[4];
       const y = item.transform[5];
-      const fontHeight = item.transform[3];
-      const fontWidth = item.transform[0];
-      const itemWidth = item.width;
-      const itemHeight = item.height || fontHeight; // fallback if height is 0
+      const fontHeightPt = Math.abs(item.transform[3]);
+      const widthPt = item.width;
+      const heightPt = item.height || fontHeightPt;
 
-      // 1. Redact: Draw opaque background rectangle to hide the original text
+      // 1. Redact: opaque rectangle with sampled background color
+      //    y in pdf-lib = bottom of rectangle. Add descent padding below baseline.
+      const rectY = y - heightPt * 0.25;
+      const rectH = heightPt * 1.25;
       page.drawRectangle({
-        x: x,
-        y: y, // start redaction at the baseline (or slightly below to cover descent)
-        width: itemWidth,
-        height: itemHeight,
+        x,
+        y: rectY,
+        width: widthPt,
+        height: rectH,
         color: rgb(edit.bgColor[0], edit.bgColor[1], edit.bgColor[2]),
+        borderWidth: 0,
       });
 
-      // 2. Redraw: Embed standard font and draw replacement text
-      const style = styles[item.fontName] || {};
-      const fontFamily = style.fontFamily || "";
+      // 2. Redraw: standard font at matching size
+      const styleObj = styles[item.fontName] || {};
+      const fontFamily = styleObj.fontFamily || "";
       const standardFontName = getStandardFontName(fontFamily, item.fontName);
-      
+
       if (!fontCache[standardFontName]) {
         fontCache[standardFontName] = await pdfDoc.embedFont(standardFontName);
       }
       const font = fontCache[standardFontName];
 
-      // Calculate new text width at standard font size
-      const standardTextWidth = font.widthOfTextAtSize(edit.newText, fontHeight);
-      
-      // Calculate horizontal scaling factor if new width differs significantly from the original bounding box
-      let horizontalScale = 1.0;
-      if (itemWidth > 0 && Math.abs(standardTextWidth - itemWidth) / itemWidth > 0.15) {
-        horizontalScale = itemWidth / standardTextWidth;
+      // Horizontal scale to fit original bounding box width
+      const standardW = font.widthOfTextAtSize(edit.newText, fontHeightPt);
+      let hScale = 1.0;
+      if (widthPt > 0 && standardW > 0 && Math.abs(standardW - widthPt) / widthPt > 0.15) {
+        hScale = widthPt / standardW;
       }
 
-      // Draw the new text run
-      if (horizontalScale !== 1.0) {
-        // Set Character Squeeze (Tz horizontal scale operator) in PDF Text state
+      if (hScale !== 1.0) {
         page.pushOperators(
-          PDFOperator.of(PDFOperatorNames.SetTextHorizontalScaling, [PDFNumber.of(Math.round(horizontalScale * 100))])
+          PDFOperator.of(PDFOperatorNames.SetTextHorizontalScaling, [
+            PDFNumber.of(Math.round(hScale * 100)),
+          ])
         );
       }
 
       page.drawText(edit.newText, {
-        x: x,
-        y: y,
-        size: fontHeight,
-        font: font,
+        x,
+        y,
+        size: fontHeightPt,
+        font,
         color: rgb(edit.color[0], edit.color[1], edit.color[2]),
       });
 
-      if (horizontalScale !== 1.0) {
-        // Reset Character Squeeze back to 100%
-        page.pushOperators(PDFOperator.of(PDFOperatorNames.SetTextHorizontalScaling, [PDFNumber.of(100)]));
+      if (hScale !== 1.0) {
+        page.pushOperators(
+          PDFOperator.of(PDFOperatorNames.SetTextHorizontalScaling, [PDFNumber.of(100)])
+        );
       }
     }
   }
 
-  return await pdfDoc.save({ useObjectStreams: true });
+  return pdfDoc.save({ useObjectStreams: true });
 }

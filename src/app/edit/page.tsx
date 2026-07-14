@@ -258,7 +258,6 @@ export default function EditTextPage() {
                   edits={edits}
                   onCommitEdit={handleCommitEdit}
                   onStylesLoaded={handleStylesLoaded}
-                  scale={1.2}
                 />
               </div>
             </div>
