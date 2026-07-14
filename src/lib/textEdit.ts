@@ -142,7 +142,12 @@ export function sampleColorsFromCanvas(
     edgeSamples.forEach(({ x, y }) => {
       const i = (y * w + x) * 4;
       if (i >= 0 && i < data.length - 3) {
-        bgR += data[i]; bgG += data[i + 1]; bgB += data[i + 2]; bgN++;
+        const a = data[i + 3] / 255;
+        // Blend with white (255,255,255) since canvas is on a white background
+        const r = data[i] * a + 255 * (1 - a);
+        const g = data[i + 1] * a + 255 * (1 - a);
+        const b = data[i + 2] * a + 255 * (1 - a);
+        bgR += r; bgG += g; bgB += b; bgN++;
       }
     });
 
@@ -156,7 +161,10 @@ export function sampleColorsFromCanvas(
     let bestR = 0, bestG = 0, bestB = 0, maxDist = -1;
 
     for (let i = 0; i < data.length; i += 4) {
-      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const a = data[i + 3] / 255;
+      const r = data[i] * a + 255 * (1 - a);
+      const g = data[i + 1] * a + 255 * (1 - a);
+      const b = data[i + 2] * a + 255 * (1 - a);
       const d = (r - bgRv) ** 2 + (g - bgGv) ** 2 + (b - bgBv) ** 2;
       if (d > maxDist) { maxDist = d; bestR = r; bestG = g; bestB = b; }
       if (d > 1500) { tR += r; tG += g; tB += b; tN++; }

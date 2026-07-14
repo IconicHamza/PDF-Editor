@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { loadPDF, renderPageToCanvas } from "@/lib/pdf-renderer";
-import { Loader2, Maximize2, Minimize2, Eye, PenLine } from "lucide-react";
+import { Loader2, Maximize2, Minimize2, Eye, PenLine, ZoomIn, ZoomOut } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { sampleColorsFromCanvas, TextEditData } from "@/lib/textEdit";
@@ -58,8 +58,9 @@ export function PDFPreview({
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  // Fullscreen
+  // Fullscreen & Zoom
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [zoom, setZoom] = useState(1.0);
 
   // ── ResizeObserver: keeps displaySize in sync with actual canvas layout ──
   useEffect(() => {
@@ -112,7 +113,7 @@ export function PDFPreview({
         if (active) setPdfDims({ w: vp.width, h: vp.height });
 
         if (active && canvasRef.current) {
-          await renderPageToCanvas(doc, page, canvasRef.current, scale);
+          await renderPageToCanvas(doc, page, canvasRef.current, scale * zoom);
 
           // Measure display size after CSS settles
           requestAnimationFrame(() => {
@@ -142,7 +143,7 @@ export function PDFPreview({
     })();
 
     return () => { active = false; };
-  }, [file, page, scale, mode]);
+  }, [file, page, scale, mode, zoom]);
 
   // ── Fullscreen toggle ─────────────────────────────────────────────────────
   const toggleFullscreen = useCallback(() => {
@@ -268,13 +269,31 @@ export function PDFPreview({
               : "Preview — shows how the exported PDF will look"}
           </span>
 
-          <button
-            onClick={toggleFullscreen}
-            title={isFullscreen ? "Exit fullscreen (Esc)" : "Maximize editor"}
-            className="ml-auto p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-foreground/60 hover:text-foreground transition-colors"
-          >
-            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-          </button>
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={() => setZoom(z => Math.max(0.5, z - 0.25))}
+              title="Zoom Out"
+              className="p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-foreground/60 hover:text-foreground transition-colors"
+            >
+              <ZoomOut size={16} />
+            </button>
+            <span className="text-xs font-mono w-10 text-center">{Math.round(zoom * 100)}%</span>
+            <button
+              onClick={() => setZoom(z => Math.min(3.0, z + 0.25))}
+              title="Zoom In"
+              className="p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-foreground/60 hover:text-foreground transition-colors"
+            >
+              <ZoomIn size={16} />
+            </button>
+            <div className="w-px h-4 bg-border mx-1" />
+            <button
+              onClick={toggleFullscreen}
+              title={isFullscreen ? "Exit fullscreen (Esc)" : "Maximize editor"}
+              className="p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-foreground/60 hover:text-foreground transition-colors"
+            >
+              {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            </button>
+          </div>
         </div>
       )}
 
