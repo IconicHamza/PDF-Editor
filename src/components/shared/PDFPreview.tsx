@@ -5,13 +5,12 @@ import { loadPDF, renderPageToCanvas } from "@/lib/pdf-renderer";
 import { Loader2, Maximize2, Minimize2, Eye, PenLine } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { sampleColorsFromCanvas, compositeEditsToCanvas, TextEditData } from "@/lib/textEdit";
+import { sampleColorsFromCanvas, TextEditData } from "@/lib/textEdit";
 
 interface PDFPreviewProps {
   file: File;
   page?: number;
   scale?: number;
-  /** "view" = plain viewer, "edit-text" = show text edit overlay */
   mode?: "view" | "edit-text";
   edits?: Record<string, TextEditData>;
   onCommitEdit?: (
@@ -33,52 +32,68 @@ export function PDFPreview({
   onCommitEdit,
   onStylesLoaded,
 }: PDFPreviewProps) {
-  // The live pdfjs canvas — shows clean PDF render. We do NOT draw on this.
-  const sourceCanvasRef = useRef<HTMLCanvasElement>(null);
-  // The composite canvas — shown in preview mode, has edits baked in.
-  const compositeCanvasRef = useRef<HTMLCanvasElement>(null);
-
-  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // This wrapper is the positioning context for all overlays.
+  // It matches the canvas's CSS display size exactly.
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const outerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // PDF dimensions in PDF points (unscaled)
-  const [pdfDimensions, setPdfDimensions] = useState({ width: 0, height: 0 });
-  // Actual CSS display size of the canvas (layout pixels)
-  const [canvasDisplaySize, setCanvasDisplaySize] = useState({ width: 0, height: 0 });
+  // PDF page size in points (unscaled)
+  const [pdfDims, setPdfDims] = useState({ w: 0, h: 0 });
+  // Canvas CSS display size in layout pixels (updated by ResizeObserver)
+  const [displaySize, setDisplaySize] = useState({ w: 0, h: 0 });
 
-  // pdfjs text items & styles for the overlay
+  // Text items + styles from pdfjs
   const [textItems, setTextItems] = useState<any[]>([]);
   const [styles, setStyles] = useState<Record<string, any>>({});
 
-  // "edit" = show clickable text overlay, "preview" = show composited result
+  // Edit vs Preview sub-mode (only relevant when mode === "edit-text")
   const [viewMode, setViewMode] = useState<"edit" | "preview">("edit");
 
-  // Which text run is being actively typed in
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  // Active inline edit
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  // Fullscreen state
+  // Fullscreen
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Track whether composite is stale (needs redraw)
-  const compositeStaleRef = useRef(true);
-
-  // ─── Resize observer ──────────────────────────────────────────────────────
+  // ── ResizeObserver: keeps displaySize in sync with actual canvas layout ──
   useEffect(() => {
-    const canvas = sourceCanvasRef.current;
+    const canvas = canvasRef.current;
     if (!canvas) return;
     const ro = new ResizeObserver(() => {
-      const rect = canvas.getBoundingClientRect();
-      setCanvasDisplaySize({ width: rect.width, height: rect.height });
+      const r = canvas.getBoundingClientRect();
+      setDisplaySize({ w: r.width, h: r.height });
     });
     ro.observe(canvas);
     return () => ro.disconnect();
   }, []);
 
-  // ─── Render PDF page ──────────────────────────────────────────────────────
+  // ── Also recalculate on fullscreen change ──
+  useEffect(() => {
+    const handler = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+      // Force displaySize recalc after layout settles
+      requestAnimationFrame(() => {
+        if (canvasRef.current) {
+          const r = canvasRef.current.getBoundingClientRect();
+          setDisplaySize({ w: r.width, h: r.height });
+        }
+      });
+    };
+    document.addEventListener("fullscreenchange", handler);
+    window.addEventListener("resize", handler);
+    return () => {
+      document.removeEventListener("fullscreenchange", handler);
+      window.removeEventListener("resize", handler);
+    };
+  }, []);
+
+  // ── Render PDF page ──────────────────────────────────────────────────────
   useEffect(() => {
     let active = true;
     let doc: PDFDocumentProxy | null = null;
@@ -87,33 +102,33 @@ export function PDFPreview({
       try {
         setLoading(true);
         setError(null);
-        setEditingIndex(null);
+        setEditingIdx(null);
         setViewMode("edit");
-        compositeStaleRef.current = true;
 
         doc = await loadPDF(file);
         const pageObj = await doc.getPage(page);
-        const viewport = pageObj.getViewport({ scale: 1.0 });
+        const vp = pageObj.getViewport({ scale: 1.0 });
 
-        if (active) setPdfDimensions({ width: viewport.width, height: viewport.height });
+        if (active) setPdfDims({ w: vp.width, h: vp.height });
 
-        if (active && sourceCanvasRef.current) {
-          await renderPageToCanvas(doc, page, sourceCanvasRef.current, scale);
+        if (active && canvasRef.current) {
+          await renderPageToCanvas(doc, page, canvasRef.current, scale);
 
-          // Measure display size after render sets CSS size
+          // Measure display size after CSS settles
           requestAnimationFrame(() => {
-            if (sourceCanvasRef.current) {
-              const rect = sourceCanvasRef.current.getBoundingClientRect();
-              setCanvasDisplaySize({ width: rect.width, height: rect.height });
+            if (canvasRef.current) {
+              const r = canvasRef.current.getBoundingClientRect();
+              setDisplaySize({ w: r.width, h: r.height });
             }
           });
 
+          // Extract text content for edit overlay
           if (active && mode === "edit-text") {
-            const textContent = await pageObj.getTextContent();
+            const tc = await pageObj.getTextContent();
             if (active) {
-              setTextItems(textContent.items);
-              setStyles(textContent.styles);
-              if (onStylesLoaded) onStylesLoaded(textContent.styles);
+              setTextItems(tc.items);
+              setStyles(tc.styles);
+              onStylesLoaded?.(tc.styles);
             }
           }
         }
@@ -129,203 +144,146 @@ export function PDFPreview({
     return () => { active = false; };
   }, [file, page, scale, mode]);
 
-  // ─── Build composite canvas when switching to preview mode ───────────────
-  const buildComposite = useCallback(async () => {
-    const src = sourceCanvasRef.current;
-    const dst = compositeCanvasRef.current;
-    if (!src || !dst || pdfDimensions.width === 0) return;
-
-    // Copy source canvas → composite canvas (same physical pixel dimensions)
-    dst.width = src.width;
-    dst.height = src.height;
-    dst.style.width = src.style.width;
-    dst.style.height = src.style.height;
-    dst.style.maxWidth = src.style.maxWidth;
-    dst.style.aspectRatio = src.style.aspectRatio;
-
-    const dstCtx = dst.getContext("2d");
-    if (!dstCtx) return;
-    dstCtx.drawImage(src, 0, 0);
-
-    // Collect edits for the current page
-    const pageIndex = page - 1;
-    const pageEdits: Record<number, TextEditData> = {};
-    Object.keys(edits).forEach((key) => {
-      const [pi, ii] = key.split("-").map(Number);
-      if (pi === pageIndex) pageEdits[ii] = edits[key];
-    });
-
-    if (Object.keys(pageEdits).length > 0) {
-      await compositeEditsToCanvas(dst, pdfDimensions.width, pdfDimensions.height, pageEdits, styles);
-    }
-
-    compositeStaleRef.current = false;
-  }, [edits, page, pdfDimensions, styles]);
-
-  useEffect(() => {
-    compositeStaleRef.current = true;
-    if (viewMode === "preview" && !loading) buildComposite();
-  }, [edits, viewMode, loading, buildComposite]);
-
-  const handleSwitchToPreview = () => {
-    setEditingIndex(null);
-    setViewMode("preview");
-    buildComposite();
-  };
-
-  const handleSwitchToEdit = () => {
-    setViewMode("edit");
-  };
-
-  // ─── Fullscreen ───────────────────────────────────────────────────────────
+  // ── Fullscreen toggle ─────────────────────────────────────────────────────
   const toggleFullscreen = useCallback(() => {
-    const el = containerRef.current;
+    const el = outerRef.current;
     if (!el) return;
     if (!isFullscreen) {
-      if (el.requestFullscreen) el.requestFullscreen().catch(() => setIsFullscreen(true));
-      else setIsFullscreen(true);
+      el.requestFullscreen?.().catch(() => setIsFullscreen(true));
     } else {
-      if (document.exitFullscreen && document.fullscreenElement) {
-        document.exitFullscreen().catch(() => setIsFullscreen(false));
-      } else {
-        setIsFullscreen(false);
-      }
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => setIsFullscreen(false));
+      else setIsFullscreen(false);
     }
   }, [isFullscreen]);
 
   useEffect(() => {
-    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
-  }, []);
-
-  // Escape key exits fullscreen (also handled by browser, but belt + suspenders)
-  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isFullscreen && !document.fullscreenElement) {
-        setIsFullscreen(false);
-      }
+      if (e.key === "Escape" && isFullscreen && !document.fullscreenElement) setIsFullscreen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [isFullscreen]);
 
-  // ─── Inline editing ───────────────────────────────────────────────────────
+  // ── Inline editing ────────────────────────────────────────────────────────
   const commitEdit = useCallback((idx: number) => {
-    if (!onCommitEdit || !sourceCanvasRef.current || pdfDimensions.width === 0) return;
-
+    if (!onCommitEdit || !canvasRef.current || pdfDims.w === 0) return;
     const item = textItems[idx];
     if (!item) return;
 
     const x = item.transform[4];
     const y = item.transform[5];
-    const fontH = Math.abs(item.transform[3]);
+    const fh = Math.abs(item.transform[3]);
     const w = item.width;
-    const h = item.height || fontH;
+    const h = item.height || fh;
 
-    // Sample from the source (unmodified) canvas
-    const sampled = sampleColorsFromCanvas(
-      sourceCanvasRef.current,
-      pdfDimensions.width,
-      pdfDimensions.height,
-      { x, y, width: w, height: h }
-    );
-
+    // Sample colors from the clean source canvas
+    const sampled = sampleColorsFromCanvas(canvasRef.current, pdfDims.w, pdfDims.h, { x, y, width: w, height: h });
     onCommitEdit(idx, item, editValue, sampled.color, sampled.bgColor);
-    setEditingIndex(null);
-    compositeStaleRef.current = true;
-  }, [editValue, textItems, onCommitEdit, pdfDimensions]);
+    setEditingIdx(null);
+  }, [editValue, textItems, onCommitEdit, pdfDims]);
 
-  const startEditing = useCallback((idx: number, currentText: string) => {
+  const startEditing = useCallback((idx: number, text: string) => {
     setViewMode("edit");
-    setEditingIndex(idx);
-    setEditValue(currentText);
+    setEditingIdx(idx);
+    setEditValue(text);
     setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select(); }, 30);
   }, []);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent, idx: number) => {
+  const onKeyDown = useCallback((e: React.KeyboardEvent, idx: number) => {
     if (e.key === "Enter") { e.preventDefault(); commitEdit(idx); }
-    else if (e.key === "Escape") { setEditingIndex(null); }
+    else if (e.key === "Escape") setEditingIdx(null);
   }, [commitEdit]);
 
-  // ─── Render ───────────────────────────────────────────────────────────────
-  const pageIndex = page - 1;
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const pageIdx = page - 1;
+  const isEditing = mode === "edit-text";
 
-  // Collect edits for current page for overlay rendering
-  const pageEditsMap: Record<number, TextEditData> = {};
+  // Collect edits for this page
+  const pageEdits: Record<number, TextEditData> = {};
   Object.keys(edits).forEach((key) => {
     const [pi, ii] = key.split("-").map(Number);
-    if (pi === pageIndex) pageEditsMap[ii] = edits[key];
+    if (pi === pageIdx) pageEdits[ii] = edits[key];
   });
-  const hasEdits = Object.keys(pageEditsMap).length > 0;
 
-  const isEditing = mode === "edit-text";
+  // Convert PDF coords → CSS % (PDF origin bottom-left, CSS origin top-left)
+  const pdfToOverlay = (item: any) => {
+    const x = item.transform[4];
+    const y = item.transform[5];
+    const fh = Math.abs(item.transform[3]);
+    const w = item.width;
+    const h = item.height || fh;
+
+    return {
+      left: `${(x / pdfDims.w) * 100}%`,
+      top: `${((pdfDims.h - y - h) / pdfDims.h) * 100}%`,
+      width: `${(w / pdfDims.w) * 100}%`,
+      height: `${(h / pdfDims.h) * 100}%`,
+      fontSize: displaySize.h > 0 ? (fh / pdfDims.h) * displaySize.h : 0,
+    };
+  };
+
+  const getFontCSS = (item: any) => {
+    const s = styles[item.fontName] || {};
+    const ff = s.fontFamily || "sans-serif";
+    const n = (item.fontName || "").toLowerCase();
+    return {
+      fontFamily: ff,
+      fontStyle: (ff.toLowerCase().includes("italic") || ff.toLowerCase().includes("oblique") || n.includes("italic")) ? "italic" as const : "normal" as const,
+      fontWeight: (ff.toLowerCase().includes("bold") || n.includes("bold")) ? "bold" as const : "normal" as const,
+    };
+  };
 
   return (
     <div
-      ref={containerRef}
+      ref={outerRef}
       className={`relative flex flex-col bg-black/5 dark:bg-white/5 rounded-2xl border border-border overflow-hidden ${
         isFullscreen ? "fixed inset-0 z-[9999] rounded-none bg-background" : ""
       }`}
     >
-      {/* ── Toolbar (edit-text mode only) ─────────────────────────────── */}
+      {/* ── Toolbar ──────────────────────────────────────────────────── */}
       {isEditing && !loading && (
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-surface/80 backdrop-blur-sm flex-shrink-0">
-          {/* Mode toggle */}
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-surface/80 backdrop-blur-sm flex-shrink-0 flex-wrap">
           <div className="flex items-center rounded-lg border border-border overflow-hidden text-xs font-medium">
             <button
-              onClick={handleSwitchToEdit}
+              onClick={() => { setEditingIdx(null); setViewMode("edit"); }}
               className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                viewMode === "edit"
-                  ? "bg-primary text-white"
-                  : "hover:bg-black/5 dark:hover:bg-white/5 text-foreground/70"
+                viewMode === "edit" ? "bg-primary text-white" : "hover:bg-black/5 dark:hover:bg-white/5 text-foreground/70"
               }`}
             >
               <PenLine size={13} /> Edit
             </button>
             <button
-              onClick={handleSwitchToPreview}
+              onClick={() => { setEditingIdx(null); setViewMode("preview"); }}
               className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                viewMode === "preview"
-                  ? "bg-primary text-white"
-                  : "hover:bg-black/5 dark:hover:bg-white/5 text-foreground/70"
+                viewMode === "preview" ? "bg-primary text-white" : "hover:bg-black/5 dark:hover:bg-white/5 text-foreground/70"
               }`}
             >
               <Eye size={13} /> Preview
             </button>
           </div>
 
-          {viewMode === "edit" && (
-            <span className="text-xs text-foreground/50 ml-1">
-              Click any text to edit · Enter or click away to confirm
-            </span>
-          )}
-          {viewMode === "preview" && (
-            <span className="text-xs text-foreground/50 ml-1">
-              Preview mode — dashed edit indicators are hidden
-            </span>
-          )}
+          <span className="text-xs text-foreground/50 ml-1">
+            {viewMode === "edit"
+              ? "Click any text to edit · Enter to confirm"
+              : "Preview — shows how the exported PDF will look"}
+          </span>
 
-          <div className="ml-auto">
-            <button
-              onClick={toggleFullscreen}
-              title={isFullscreen ? "Exit fullscreen (Esc)" : "Maximize editor"}
-              className="p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-foreground/60 hover:text-foreground transition-colors"
-            >
-              {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-            </button>
-          </div>
+          <button
+            onClick={toggleFullscreen}
+            title={isFullscreen ? "Exit fullscreen (Esc)" : "Maximize editor"}
+            className="ml-auto p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-foreground/60 hover:text-foreground transition-colors"
+          >
+            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
         </div>
       )}
 
-      {/* ── Canvas area ───────────────────────────────────────────────── */}
-      <div className="relative flex-1 flex items-center justify-center min-h-[400px] overflow-auto">
+      {/* ── Canvas + overlay area ────────────────────────────────────── */}
+      <div className="relative flex-1 flex items-center justify-center min-h-[400px] overflow-auto p-4">
         <AnimatePresence>
           {loading && (
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="absolute inset-0 flex flex-col items-center justify-center text-primary/60 z-30 bg-background/60 backdrop-blur-sm"
             >
               <Loader2 className="animate-spin mb-3" size={36} />
@@ -337,75 +295,34 @@ export function PDFPreview({
         {error ? (
           <div className="text-red-500 font-medium px-6 text-center">{error}</div>
         ) : (
-          <div className="relative my-4 mx-auto" style={{ display: "contents" }}>
-            {/* Source canvas — always rendered by pdfjs, always pixel-perfect */}
-            <canvas
-              ref={sourceCanvasRef}
-              className={`bg-white drop-shadow-xl max-w-full block ${
-                // Hide source in preview mode so composite shows
-                isEditing && viewMode === "preview" ? "invisible absolute" : ""
-              }`}
-            />
+          /* Wrapper: this div IS the positioning context for overlay elements.
+             Its size is driven by the canvas's CSS display size. */
+          <div
+            ref={wrapperRef}
+            className="relative inline-block"
+            style={{ width: displaySize.w || undefined, height: displaySize.h || undefined }}
+          >
+            {/* The pdfjs canvas — always sharp, always the source of truth */}
+            <canvas ref={canvasRef} className="bg-white drop-shadow-xl block max-w-full" />
 
-            {/* Composite canvas — shown only in preview mode */}
-            {isEditing && viewMode === "preview" && (
-              <canvas
-                ref={compositeCanvasRef}
-                className="bg-white drop-shadow-xl max-w-full block"
-              />
-            )}
-
-            {/* Text edit overlay — only in edit mode, never composited onto canvas */}
-            {isEditing && viewMode === "edit" && !loading && pdfDimensions.width > 0 && (
-              <div
-                className="absolute top-0 left-0 pointer-events-none overflow-hidden"
-                style={{
-                  width: canvasDisplaySize.width || "100%",
-                  height: canvasDisplaySize.height || "100%",
-                }}
-              >
+            {/* ── Text overlay layer ──────────────────────────────────── */}
+            {isEditing && !loading && pdfDims.w > 0 && (
+              <div className="absolute inset-0 pointer-events-none overflow-hidden">
                 {textItems.map((item, idx) => {
-                  // Only render items with text content (skip whitespace-only spans)
-                  if (!item.str) return null;
+                  if (!item.str || !item.str.trim()) return null;
 
-                  const editKey = `${pageIndex}-${idx}`;
-                  const existingEdit = pageEditsMap[idx];
+                  const existingEdit = pageEdits[idx];
                   const displayStr = existingEdit ? existingEdit.newText : item.str;
+                  const pos = pdfToOverlay(item);
+                  const fontCSS = getFontCSS(item);
 
-                  // PDF coords → CSS % positions (relative to display canvas size)
-                  const pdfX = item.transform[4];
-                  const pdfY = item.transform[5];
-                  const fontH = Math.abs(item.transform[3]);
-                  const itemW = item.width;
-                  const itemH = item.height || fontH;
-
-                  // Percentage relative to PDF point space
-                  const leftPct = (pdfX / pdfDimensions.width) * 100;
-                  // PDF y is from bottom; CSS top is from top
-                  const topPct = ((pdfDimensions.height - pdfY - itemH) / pdfDimensions.height) * 100;
-                  const widthPct = (itemW / pdfDimensions.width) * 100;
-                  const heightPct = (itemH / pdfDimensions.height) * 100;
-
-                  // CSS font size (scale fontH from PDF pts → display px)
-                  const cssFontSize = canvasDisplaySize.height > 0
-                    ? (fontH / pdfDimensions.height) * canvasDisplaySize.height
-                    : 0;
-
-                  const styleObj = styles[item.fontName] || {};
-                  const fontFamily = styleObj.fontFamily || "sans-serif";
-                  const isBold = fontFamily.toLowerCase().includes("bold") || item.fontName.toLowerCase().includes("bold");
-                  const isItalic =
-                    fontFamily.toLowerCase().includes("italic") ||
-                    fontFamily.toLowerCase().includes("oblique") ||
-                    item.fontName.toLowerCase().includes("italic");
-
-                  // Active input box
-                  if (editingIndex === idx) {
+                  // ── Active input ──
+                  if (editingIdx === idx) {
                     return (
                       <div
-                        key={editKey}
+                        key={`${pageIdx}-${idx}`}
                         className="absolute pointer-events-auto z-20"
-                        style={{ left: `${leftPct}%`, top: `${topPct}%`, width: `${widthPct}%`, height: `${heightPct}%` }}
+                        style={{ left: pos.left, top: pos.top, width: pos.width, height: pos.height }}
                       >
                         <input
                           ref={inputRef}
@@ -413,37 +330,60 @@ export function PDFPreview({
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
                           onBlur={() => commitEdit(idx)}
-                          onKeyDown={(e) => handleKeyDown(e, idx)}
-                          className="w-full h-full bg-white/90 dark:bg-slate-900/90 border-2 border-primary text-black dark:text-white rounded-sm px-0.5 focus:outline-none leading-none backdrop-blur-sm shadow-lg"
+                          onKeyDown={(e) => onKeyDown(e, idx)}
+                          className="w-full h-full bg-white/95 dark:bg-slate-900/95 border-2 border-primary text-black dark:text-white rounded-sm px-0.5 focus:outline-none leading-none backdrop-blur-sm shadow-lg"
                           style={{
-                            fontSize: cssFontSize > 0 ? `${cssFontSize}px` : undefined,
-                            fontFamily,
-                            fontStyle: isItalic ? "italic" : "normal",
-                            fontWeight: isBold ? "bold" : "normal",
+                            fontSize: pos.fontSize > 0 ? `${pos.fontSize}px` : undefined,
+                            ...fontCSS,
                           }}
                         />
                       </div>
                     );
                   }
 
-                  // Hover / edited affordance — TRANSPARENT background, border only.
-                  // We do NOT paint any background color here; the canvas shows through.
+                  // ── Committed edit: CSS-based live preview ──
+                  // In Edit mode: shows replacement text with sampled bg + dashed border
+                  // In Preview mode: shows replacement text with sampled bg, NO border
+                  if (existingEdit) {
+                    const [bgR, bgG, bgB] = existingEdit.bgColor;
+                    const [tR, tG, tB] = existingEdit.color;
+
+                    return (
+                      <div
+                        key={`${pageIdx}-${idx}`}
+                        onClick={viewMode === "edit" ? () => startEditing(idx, displayStr) : undefined}
+                        title={viewMode === "edit" ? `Edited · original: "${item.str}"` : undefined}
+                        className={`absolute overflow-hidden whitespace-nowrap leading-none flex items-center ${
+                          viewMode === "edit"
+                            ? "pointer-events-auto cursor-text border border-dashed border-emerald-500/70"
+                            : "pointer-events-none border-none"
+                        }`}
+                        style={{
+                          left: pos.left,
+                          top: pos.top,
+                          width: pos.width,
+                          height: pos.height,
+                          fontSize: pos.fontSize > 0 ? `${pos.fontSize}px` : undefined,
+                          ...fontCSS,
+                          backgroundColor: `rgb(${Math.round(bgR * 255)},${Math.round(bgG * 255)},${Math.round(bgB * 255)})`,
+                          color: `rgb(${Math.round(tR * 255)},${Math.round(tG * 255)},${Math.round(tB * 255)})`,
+                        }}
+                      >
+                        {displayStr}
+                      </div>
+                    );
+                  }
+
+                  // ── Unedited run: transparent hit target (edit mode only) ──
+                  if (viewMode !== "edit") return null;
+
                   return (
                     <div
-                      key={editKey}
+                      key={`${pageIdx}-${idx}`}
                       onClick={() => startEditing(idx, displayStr)}
-                      title={existingEdit ? `Edited · original: "${item.str}"` : `Click to edit: "${item.str}"`}
-                      className={`absolute pointer-events-auto cursor-text select-none transition-all duration-100 ${
-                        existingEdit
-                          ? "border border-dashed border-emerald-500/80 bg-emerald-400/10"
-                          : "border border-transparent hover:border-primary/50 hover:bg-primary/5"
-                      }`}
-                      style={{
-                        left: `${leftPct}%`,
-                        top: `${topPct}%`,
-                        width: `${widthPct}%`,
-                        height: `${heightPct}%`,
-                      }}
+                      title={`Click to edit: "${item.str}"`}
+                      className="absolute pointer-events-auto cursor-text select-none border border-transparent hover:border-primary/50 hover:bg-primary/5 transition-all duration-100"
+                      style={{ left: pos.left, top: pos.top, width: pos.width, height: pos.height }}
                     />
                   );
                 })}
